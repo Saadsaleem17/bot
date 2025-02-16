@@ -1,6 +1,14 @@
+name: Deploy WhatsApp Bot
+
+on:  
+  push:  
+    branches: [ main ]  # Runs when you push to the `main` branch
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -16,4 +24,4 @@ jobs:
       - name: Run Bot
         run: node index.js
         env:
-          YOUR_NUMBER: ${{ secrets.YOUR_NUMBER }}
+          YOUR_NUMBER: ${{ secrets.YOUR_NUMBER }}  # Inject Secret as ENV variable
