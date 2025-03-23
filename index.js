@@ -1,4 +1,4 @@
-import { makeWASocket, useMultiFileAuthState, downloadMediaMessage } from '@whiskeysockets/baileys';
+import { makeWASocket, useMultiFileAuthState, downloadMediaMessage, DisconnectReason, makeInMemoryStore } from '@whiskeysockets/baileys';
 import qr from 'qrcode-terminal';
 import cron from 'node-cron';
 import mongoose from 'mongoose';
@@ -21,21 +21,35 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('Connected to MongoDB'))
-    .catch(err => console.error('MongoDB connection error:', err));
+    .then(() => {
+        console.log('Connected to MongoDB');
+        console.log('Database URL:', process.env.MONGODB_URI);
+        console.log('Database Name: whatsapp_images');
+    })
+    .catch(err => {
+        console.error('MongoDB connection error:', err);
+        console.error('Connection string:', process.env.MONGODB_URI);
+    });
+
+// Create a store for the WhatsApp session
+const store = makeInMemoryStore({});
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('./auth');
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true
+        printQRInTerminal: true,
+        browser: ['Chrome (Linux)', '', '']
     });
+
+    // Bind store to the socket
+    store.bind(sock.ev);
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
         if (connection === "close") {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
                 console.log("Reconnecting...");
                 connectToWhatsApp();
@@ -76,10 +90,7 @@ async function connectToWhatsApp() {
                 await image.save();
                 console.log('✅ Image saved to database:', fileName);
 
-                // Send confirmation message
-                await sock.sendMessage(m.key.remoteJid, {
-                    text: '✅ Image received and saved successfully!'
-                });
+                // Removed confirmation message
             } catch (error) {
                 console.error('Error processing image:', error);
                 await sock.sendMessage(m.key.remoteJid, {
