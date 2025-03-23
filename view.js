@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import { Image } from './models/Image.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import cors from 'cors';
+import helmet from 'helmet';
 
 dotenv.config();
 
@@ -11,7 +13,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
+
+// Security middleware
+app.use(helmet());
+app.use(cors());
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
