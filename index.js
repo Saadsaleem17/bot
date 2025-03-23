@@ -20,11 +20,23 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
+mongoose.connect(process.env.MONGODB_URI, {
+    dbName: 'whatsapp_images',  // Explicitly set the database name
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+})
     .then(() => {
         console.log('Connected to MongoDB');
         console.log('Database URL:', process.env.MONGODB_URI);
-        console.log('Database Name: whatsapp_images');
+        console.log('Database Name:', mongoose.connection.db.databaseName);
+        // List all collections in the database
+        mongoose.connection.db.listCollections().toArray((err, collections) => {
+            if (err) {
+                console.error('Error listing collections:', err);
+            } else {
+                console.log('Collections in database:', collections.map(c => c.name));
+            }
+        });
     })
     .catch(err => {
         console.error('MongoDB connection error:', err);
@@ -73,24 +85,27 @@ async function connectToWhatsApp() {
         if (messageType === 'imageMessage') {
             try {
                 const buffer = await downloadMediaMessage(m, 'buffer');
-                const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.jpg`;
-                const filePath = join(uploadsDir, fileName);
-
-                // Save image to local storage
-                fs.writeFileSync(filePath, buffer);
+                const contentType = messageContent.mimetype || 'image/jpeg';
 
                 // Create image record in database
                 const image = new Image({
                     messageId: m.key.id,
                     sender: m.key.remoteJid,
-                    imageUrl: `/uploads/${fileName}`,
+                    imageData: buffer,
+                    contentType: contentType,
                     caption: messageContent.caption || ''
                 });
 
-                await image.save();
-                console.log('✅ Image saved to database:', fileName);
+                console.log('Attempting to save image to database:', {
+                    messageId: m.key.id,
+                    sender: m.key.remoteJid,
+                    contentType: contentType
+                });
 
-                // Removed confirmation message
+                await image.save();
+                console.log('✅ Image saved to database successfully');
+                console.log('Database:', mongoose.connection.db.databaseName);
+                console.log('Collection: images');
             } catch (error) {
                 console.error('Error processing image:', error);
                 await sock.sendMessage(m.key.remoteJid, {

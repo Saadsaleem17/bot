@@ -14,7 +14,11 @@ const imageSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
-    imageUrl: {
+    imageData: {
+        type: Buffer,
+        required: true
+    },
+    contentType: {
         type: String,
         required: true
     },
