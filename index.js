@@ -1,6 +1,5 @@
 import { makeWASocket, useMultiFileAuthState, downloadMediaMessage, DisconnectReason, makeInMemoryStore } from '@whiskeysockets/baileys';
 import qr from 'qrcode-terminal';
-import cron from 'node-cron';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { Image } from './models/Image.js';
@@ -13,15 +12,13 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Create uploads directory if it doesn't exist
 const uploadsDir = join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
 }
 
-// Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
-    dbName: 'whatsapp_images',  // Explicitly set the database name
+    dbName: 'whatsapp_images',
     useNewUrlParser: true,
     useUnifiedTopology: true
 })
@@ -29,7 +26,6 @@ mongoose.connect(process.env.MONGODB_URI, {
         console.log('Connected to MongoDB');
         console.log('Database URL:', process.env.MONGODB_URI);
         console.log('Database Name:', mongoose.connection.db.databaseName);
-        // List all collections in the database
         mongoose.connection.db.listCollections().toArray((err, collections) => {
             if (err) {
                 console.error('Error listing collections:', err);
@@ -43,7 +39,6 @@ mongoose.connect(process.env.MONGODB_URI, {
         console.error('Connection string:', process.env.MONGODB_URI);
     });
 
-// Create a store for the WhatsApp session
 const store = makeInMemoryStore({});
 
 async function connectToWhatsApp() {
@@ -54,7 +49,6 @@ async function connectToWhatsApp() {
         browser: ['Chrome (Linux)', '', '']
     });
 
-    // Bind store to the socket
     store.bind(sock.ev);
 
     sock.ev.on('creds.update', saveCreds);
@@ -73,7 +67,6 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Handle incoming messages
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0];
         if (!m.message) return;
@@ -81,13 +74,11 @@ async function connectToWhatsApp() {
         const messageType = Object.keys(m.message)[0];
         const messageContent = m.message[messageType];
 
-        // Handle image messages
         if (messageType === 'imageMessage') {
             try {
                 const buffer = await downloadMediaMessage(m, 'buffer');
                 const contentType = messageContent.mimetype || 'image/jpeg';
 
-                // Create image record in database
                 const image = new Image({
                     messageId: m.key.id,
                     sender: m.key.remoteJid,
@@ -116,28 +107,6 @@ async function connectToWhatsApp() {
     });
 
     const yourNumber = process.env.YOUR_NUMBER;
-
-    // Schedule reminders
-    cron.schedule('0 9 * * *', () => {
-        sendReminder(sock, yourNumber, "🌞 Good morning! Don't forget to plan your tasks for today!");
-    });
-
-    cron.schedule('0 14 * * *', () => {
-        sendReminder(sock, yourNumber, "🚀 Reminder: Stay focused and finish your work on time!");
-    });
-
-    cron.schedule('0 20 * * *', () => {
-        sendReminder(sock, yourNumber, "🌙 Night check-in: Did you commit to github? Plan for tomorrow!");
-    });
-
-    cron.schedule('20 0 * * *', () => {
-        sendReminder(sock, yourNumber, "🌙 Night check-in: Did you commit to github? Plan for tomorrow!");
-    });
-
-    async function sendReminder(sock, to, message) {
-        await sock.sendMessage(to, { text: message });
-        console.log(`✅ Reminder sent to ${to}: ${message}`);
-    }
 
     return sock;
 }
