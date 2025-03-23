@@ -29,7 +29,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 .catch(err => console.error('MongoDB connection error:', err));
 
 // Route to serve image data
-app.get('/image/:id', async (req, res) => {
+app.get('/api/image/:id', async (req, res) => {
     try {
         const image = await Image.findById(req.params.id);
         if (!image) {
@@ -44,6 +44,16 @@ app.get('/image/:id', async (req, res) => {
 });
 
 // Route to display all images
+app.get('/api/images', async (req, res) => {
+    try {
+        const images = await Image.find().sort({ timestamp: -1 });
+        res.json(images);
+    } catch (error) {
+        console.error('Error fetching images:', error);
+        res.status(500).json({ error: 'Error fetching images' });
+    }
+});
+
 app.get('/', async (req, res) => {
     try {
         const images = await Image.find().sort({ timestamp: -1 });
@@ -75,12 +85,12 @@ app.get('/', async (req, res) => {
                     <div class="image-grid">
                         ${images.map(image => `
                             <div class="image-card">
-                                <img src="/image/${image._id}" alt="WhatsApp Image">
+                                <img src="/api/image/${image._id}" alt="WhatsApp Image">
                                 <div class="image-info">
                                     <p><strong>Sender:</strong> ${image.sender}</p>
                                     <p><strong>Caption:</strong> ${image.caption || 'No caption'}</p>
                                     <p class="timestamp"><strong>Date:</strong> ${new Date(image.timestamp).toLocaleString()}</p>
-                                    <a href="/image/${image._id}" download="whatsapp-image-${image._id}.jpg" class="download-btn">Download Image</a>
+                                    <a href="/api/image/${image._id}" download="whatsapp-image-${image._id}.jpg" class="download-btn">Download Image</a>
                                 </div>
                             </div>
                         `).join('')}
@@ -94,6 +104,10 @@ app.get('/', async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`View your images at http://localhost:${port}`);
-}); 
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(port, () => {
+        console.log(`View your images at http://localhost:${port}`);
+    });
+}
+
+export default app; 
