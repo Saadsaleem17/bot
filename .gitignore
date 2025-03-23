@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Uploads directory
+uploads/
+
+# Auth directory (WhatsApp session)
+auth/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db 

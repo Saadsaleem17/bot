@@ -1,19 +1,67 @@
-const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
-const qr = require('qrcode-terminal');
-const cron = require('node-cron');
+import { makeWASocket, useMultiFileAuthState, downloadMediaMessage, DisconnectReason, makeInMemoryStore } from '@whiskeysockets/baileys';
+import qr from 'qrcode-terminal';
+import cron from 'node-cron';
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import { Image } from './models/Image.js';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import fs from 'fs';
 
-async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('./auth'); // Saves session
-    const sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: true // Show QR in terminal
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Create uploads directory if it doesn't exist
+const uploadsDir = join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir);
+}
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URI, {
+    dbName: 'whatsapp_images',  // Explicitly set the database name
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+})
+    .then(() => {
+        console.log('Connected to MongoDB');
+        console.log('Database URL:', process.env.MONGODB_URI);
+        console.log('Database Name:', mongoose.connection.db.databaseName);
+        // List all collections in the database
+        mongoose.connection.db.listCollections().toArray((err, collections) => {
+            if (err) {
+                console.error('Error listing collections:', err);
+            } else {
+                console.log('Collections in database:', collections.map(c => c.name));
+            }
+        });
+    })
+    .catch(err => {
+        console.error('MongoDB connection error:', err);
+        console.error('Connection string:', process.env.MONGODB_URI);
     });
 
-    sock.ev.on('creds.update', saveCreds); // Save session so QR is not needed every time
+// Create a store for the WhatsApp session
+const store = makeInMemoryStore({});
+
+async function connectToWhatsApp() {
+    const { state, saveCreds } = await useMultiFileAuthState('./auth');
+    const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: true,
+        browser: ['Chrome (Linux)', '', '']
+    });
+
+    // Bind store to the socket
+    store.bind(sock.ev);
+
+    sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
         if (connection === "close") {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
                 console.log("Reconnecting...");
                 connectToWhatsApp();
@@ -25,10 +73,51 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Replace with your WhatsApp number (including country code, e.g., '919876543210@s.whatsapp.net')
+    // Handle incoming messages
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        const m = messages[0];
+        if (!m.message) return;
+
+        const messageType = Object.keys(m.message)[0];
+        const messageContent = m.message[messageType];
+
+        // Handle image messages
+        if (messageType === 'imageMessage') {
+            try {
+                const buffer = await downloadMediaMessage(m, 'buffer');
+                const contentType = messageContent.mimetype || 'image/jpeg';
+
+                // Create image record in database
+                const image = new Image({
+                    messageId: m.key.id,
+                    sender: m.key.remoteJid,
+                    imageData: buffer,
+                    contentType: contentType,
+                    caption: messageContent.caption || ''
+                });
+
+                console.log('Attempting to save image to database:', {
+                    messageId: m.key.id,
+                    sender: m.key.remoteJid,
+                    contentType: contentType
+                });
+
+                await image.save();
+                console.log('✅ Image saved to database successfully');
+                console.log('Database:', mongoose.connection.db.databaseName);
+                console.log('Collection: images');
+            } catch (error) {
+                console.error('Error processing image:', error);
+                await sock.sendMessage(m.key.remoteJid, {
+                    text: '❌ Error processing image. Please try again.'
+                });
+            }
+        }
+    });
+
     const yourNumber = process.env.YOUR_NUMBER;
 
-    // Schedule reminders (format: 'minute hour day month day-of-week')
+    // Schedule reminders
     cron.schedule('0 9 * * *', () => {
         sendReminder(sock, yourNumber, "🌞 Good morning! Don't forget to plan your tasks for today!");
     });
