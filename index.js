@@ -17,27 +17,88 @@ if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
 }
 
-mongoose.connect(process.env.MONGODB_URI, {
-    dbName: 'whatsapp_images',
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-})
-    .then(() => {
-        console.log('Connected to MongoDB');
-        console.log('Database URL:', process.env.MONGODB_URI);
-        console.log('Database Name:', mongoose.connection.db.databaseName);
-        mongoose.connection.db.listCollections().toArray((err, collections) => {
-            if (err) {
-                console.error('Error listing collections:', err);
-            } else {
-                console.log('Collections in database:', collections.map(c => c.name));
+// MongoDB connection with retry logic and detailed logging
+let isConnected = false;
+let connectionPromise = null;
+let connectionAttempts = 0;
+const MAX_RETRIES = 3;
+
+const connectDB = async () => {
+    if (isConnected) {
+        console.log('Using existing MongoDB connection');
+        return true;
+    }
+    
+    if (connectionPromise) {
+        console.log('Connection attempt in progress, waiting...');
+        return connectionPromise;
+    }
+    
+    connectionAttempts++;
+    console.log(`Attempting MongoDB connection (attempt ${connectionAttempts}/${MAX_RETRIES})...`);
+    
+    try {
+        connectionPromise = mongoose.connect(process.env.MONGODB_URI, {
+            dbName: 'whatsapp_images',
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+            serverSelectionTimeoutMS: 30000,
+            socketTimeoutMS: 60000,
+            connectTimeoutMS: 30000,
+            maxPoolSize: 10,
+            minPoolSize: 5,
+            ssl: true,
+            tls: true,
+            tlsAllowInvalidCertificates: true,
+            tlsAllowInvalidHostnames: true,
+            retryWrites: true,
+            w: 'majority',
+            retryReads: true,
+            autoIndex: false,
+            maxIdleTimeMS: 60000,
+            heartbeatFrequencyMS: 10000,
+            family: 4
+        }).then(() => {
+            isConnected = true;
+            console.log('Successfully connected to MongoDB');
+            return true;
+        }).catch(error => {
+            console.error('MongoDB connection error:', {
+                message: error.message,
+                code: error.code,
+                name: error.name,
+                stack: error.stack
+            });
+            isConnected = false;
+            connectionPromise = null;
+            
+            if (connectionAttempts < MAX_RETRIES) {
+                console.log(`Retrying connection in 2 seconds...`);
+                setTimeout(() => {
+                    connectDB();
+                }, 2000);
             }
+            
+            throw error;
         });
-    })
-    .catch(err => {
-        console.error('MongoDB connection error:', err);
-        console.error('Connection string:', process.env.MONGODB_URI);
-    });
+
+        return connectionPromise;
+    } catch (error) {
+        console.error('Connection setup error:', {
+            message: error.message,
+            code: error.code,
+            name: error.name,
+            stack: error.stack
+        });
+        throw error;
+    }
+};
+
+// Initialize MongoDB connection
+connectDB().catch(err => {
+    console.error('Failed to connect to MongoDB:', err);
+    process.exit(1);
+});
 
 const store = makeInMemoryStore({});
 
@@ -79,6 +140,14 @@ async function connectToWhatsApp() {
                 const buffer = await downloadMediaMessage(m, 'buffer');
                 const contentType = messageContent.mimetype || 'image/jpeg';
 
+                console.log('Image details:', {
+                    messageId: m.key.id,
+                    sender: m.key.remoteJid,
+                    contentType: contentType,
+                    bufferSize: buffer.length,
+                    isBuffer: Buffer.isBuffer(buffer)
+                });
+
                 const image = new Image({
                     messageId: m.key.id,
                     sender: m.key.remoteJid,
@@ -90,15 +159,22 @@ async function connectToWhatsApp() {
                 console.log('Attempting to save image to database:', {
                     messageId: m.key.id,
                     sender: m.key.remoteJid,
-                    contentType: contentType
+                    contentType: contentType,
+                    imageDataSize: image.imageData.length,
+                    isBuffer: Buffer.isBuffer(image.imageData)
                 });
 
                 await image.save();
                 console.log('✅ Image saved to database successfully');
                 console.log('Database:', mongoose.connection.db.databaseName);
                 console.log('Collection: images');
+                console.log('Image ID:', image._id);
             } catch (error) {
-                console.error('Error processing image:', error);
+                console.error('Error processing image:', {
+                    message: error.message,
+                    stack: error.stack,
+                    error: error
+                });
                 await sock.sendMessage(m.key.remoteJid, {
                     text: '❌ Error processing image. Please try again.'
                 });
