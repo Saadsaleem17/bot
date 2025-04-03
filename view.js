@@ -6,10 +6,10 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-dotenv.config();
-
+// Load environment variables
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,10 +22,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 // MongoDB Connection
 const connectDB = async () => {
     try {
-        const conn = await mongoose.connect(process.env.MONGODB_URI);
+        if (!process.env.MONGODB_URI) {
+            throw new Error('MONGODB_URI is not defined in environment variables');
+        }
+        
+        console.log('Connecting to MongoDB...');
+        const conn = await mongoose.connect(process.env.MONGODB_URI, {
+            serverSelectionTimeoutMS: 5000,
+            socketTimeoutMS: 45000
+        });
         console.log('MongoDB Connected:', conn.connection.host);
     } catch (error) {
-        console.error('MongoDB connection error:', error);
+        console.error('MongoDB connection error:', error.message);
         process.exit(1);
     }
 };
@@ -49,8 +57,7 @@ app.get('/api/image/:id', async (req, res) => {
             sender: image.sender,
             timestamp: image.timestamp,
             contentType: image.contentType,
-            dataSize: image.imageData.length,
-            isBuffer: Buffer.isBuffer(image.imageData)
+            dataSize: image.imageData.length
         });
 
         res.set({
@@ -111,5 +118,6 @@ app.get('/', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Image viewer server is running on port ${PORT}`);
+    console.log(`View your images at http://localhost:${PORT}`);
 }); 
