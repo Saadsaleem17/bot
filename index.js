@@ -1,6 +1,5 @@
 import { makeWASocket, useMultiFileAuthState, downloadMediaMessage, DisconnectReason, makeInMemoryStore } from '@whiskeysockets/baileys';
 import qr from 'qrcode-terminal';
-import cron from 'node-cron';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { Image } from './models/Image.js';
@@ -13,37 +12,94 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Create uploads directory if it doesn't exist
 const uploadsDir = join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
 }
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI, {
-    dbName: 'whatsapp_images',  // Explicitly set the database name
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-})
-    .then(() => {
-        console.log('Connected to MongoDB');
-        console.log('Database URL:', process.env.MONGODB_URI);
-        console.log('Database Name:', mongoose.connection.db.databaseName);
-        // List all collections in the database
-        mongoose.connection.db.listCollections().toArray((err, collections) => {
-            if (err) {
-                console.error('Error listing collections:', err);
-            } else {
-                console.log('Collections in database:', collections.map(c => c.name));
-            }
-        });
-    })
-    .catch(err => {
-        console.error('MongoDB connection error:', err);
-        console.error('Connection string:', process.env.MONGODB_URI);
-    });
+// MongoDB connection with retry logic and detailed logging
+let isConnected = false;
+let connectionPromise = null;
+let connectionAttempts = 0;
+const MAX_RETRIES = 3;
 
-// Create a store for the WhatsApp session
+const connectDB = async () => {
+    if (isConnected) {
+        console.log('Using existing MongoDB connection');
+        return true;
+    }
+    
+    if (connectionPromise) {
+        console.log('Connection attempt in progress, waiting...');
+        return connectionPromise;
+    }
+    
+    connectionAttempts++;
+    console.log(`Attempting MongoDB connection (attempt ${connectionAttempts}/${MAX_RETRIES})...`);
+    
+    try {
+        connectionPromise = mongoose.connect(process.env.MONGODB_URI, {
+            dbName: 'whatsapp_images',
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+            serverSelectionTimeoutMS: 30000,
+            socketTimeoutMS: 60000,
+            connectTimeoutMS: 30000,
+            maxPoolSize: 10,
+            minPoolSize: 5,
+            ssl: true,
+            tls: true,
+            tlsAllowInvalidCertificates: true,
+            tlsAllowInvalidHostnames: true,
+            retryWrites: true,
+            w: 'majority',
+            retryReads: true,
+            autoIndex: false,
+            maxIdleTimeMS: 60000,
+            heartbeatFrequencyMS: 10000,
+            family: 4
+        }).then(() => {
+            isConnected = true;
+            console.log('Successfully connected to MongoDB');
+            return true;
+        }).catch(error => {
+            console.error('MongoDB connection error:', {
+                message: error.message,
+                code: error.code,
+                name: error.name,
+                stack: error.stack
+            });
+            isConnected = false;
+            connectionPromise = null;
+            
+            if (connectionAttempts < MAX_RETRIES) {
+                console.log(`Retrying connection in 2 seconds...`);
+                setTimeout(() => {
+                    connectDB();
+                }, 2000);
+            }
+            
+            throw error;
+        });
+
+        return connectionPromise;
+    } catch (error) {
+        console.error('Connection setup error:', {
+            message: error.message,
+            code: error.code,
+            name: error.name,
+            stack: error.stack
+        });
+        throw error;
+    }
+};
+
+// Initialize MongoDB connection
+connectDB().catch(err => {
+    console.error('Failed to connect to MongoDB:', err);
+    process.exit(1);
+});
+
 const store = makeInMemoryStore({});
 
 async function connectToWhatsApp() {
@@ -54,7 +110,6 @@ async function connectToWhatsApp() {
         browser: ['Chrome (Linux)', '', '']
     });
 
-    // Bind store to the socket
     store.bind(sock.ev);
 
     sock.ev.on('creds.update', saveCreds);
@@ -73,7 +128,6 @@ async function connectToWhatsApp() {
         }
     });
 
-    // Handle incoming messages
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0];
         if (!m.message) return;
@@ -81,13 +135,19 @@ async function connectToWhatsApp() {
         const messageType = Object.keys(m.message)[0];
         const messageContent = m.message[messageType];
 
-        // Handle image messages
         if (messageType === 'imageMessage') {
             try {
                 const buffer = await downloadMediaMessage(m, 'buffer');
                 const contentType = messageContent.mimetype || 'image/jpeg';
 
-                // Create image record in database
+                console.log('Image details:', {
+                    messageId: m.key.id,
+                    sender: m.key.remoteJid,
+                    contentType: contentType,
+                    bufferSize: buffer.length,
+                    isBuffer: Buffer.isBuffer(buffer)
+                });
+
                 const image = new Image({
                     messageId: m.key.id,
                     sender: m.key.remoteJid,
@@ -99,15 +159,22 @@ async function connectToWhatsApp() {
                 console.log('Attempting to save image to database:', {
                     messageId: m.key.id,
                     sender: m.key.remoteJid,
-                    contentType: contentType
+                    contentType: contentType,
+                    imageDataSize: image.imageData.length,
+                    isBuffer: Buffer.isBuffer(image.imageData)
                 });
 
                 await image.save();
                 console.log('✅ Image saved to database successfully');
                 console.log('Database:', mongoose.connection.db.databaseName);
                 console.log('Collection: images');
+                console.log('Image ID:', image._id);
             } catch (error) {
-                console.error('Error processing image:', error);
+                console.error('Error processing image:', {
+                    message: error.message,
+                    stack: error.stack,
+                    error: error
+                });
                 await sock.sendMessage(m.key.remoteJid, {
                     text: '❌ Error processing image. Please try again.'
                 });
@@ -116,28 +183,6 @@ async function connectToWhatsApp() {
     });
 
     const yourNumber = process.env.YOUR_NUMBER;
-
-    // Schedule reminders
-    cron.schedule('0 9 * * *', () => {
-        sendReminder(sock, yourNumber, "🌞 Good morning! Don't forget to plan your tasks for today!");
-    });
-
-    cron.schedule('0 14 * * *', () => {
-        sendReminder(sock, yourNumber, "🚀 Reminder: Stay focused and finish your work on time!");
-    });
-
-    cron.schedule('0 20 * * *', () => {
-        sendReminder(sock, yourNumber, "🌙 Night check-in: Did you commit to github? Plan for tomorrow!");
-    });
-
-    cron.schedule('20 0 * * *', () => {
-        sendReminder(sock, yourNumber, "🌙 Night check-in: Did you commit to github? Plan for tomorrow!");
-    });
-
-    async function sendReminder(sock, to, message) {
-        await sock.sendMessage(to, { text: message });
-        console.log(`✅ Reminder sent to ${to}: ${message}`);
-    }
 
     return sock;
 }

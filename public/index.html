@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Images</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        .image-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+            transition: transform 0.2s;
+        }
+        .image-card:hover {
+            transform: translateY(-5px);
+        }
+        .image-card img {
+            width: 100%;
+            height: 300px;
+            object-fit: cover;
+        }
+        .image-info {
+            padding: 15px;
+        }
+        .image-info p {
+            margin: 5px 0;
+        }
+        .timestamp {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .download-btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #25D366;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-top: 10px;
+            transition: background 0.2s;
+        }
+        .download-btn:hover {
+            background: #128C7E;
+        }
+        h1 {
+            color: #075E54;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin: 20px 0;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .pagination button {
+            padding: 8px 16px;
+            border: none;
+            background: #25D366;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .pagination button:hover:not(:disabled) {
+            background: #128C7E;
+        }
+        .pagination button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .pagination-info {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            font-size: 1.2em;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>WhatsApp Images</h1>
+    <div class="image-grid" id="imageGrid"></div>
+    <div class="pagination" id="pagination"></div>
+
+    <script>
+        let currentPage = 1;
+        const limit = 12;
+        let totalPages = 1;
+
+        async function fetchImages(page) {
+            try {
+                const response = await fetch(`/api/images?page=${page}&limit=${limit}`);
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching images:', error);
+                return { images: [], pagination: { total: 0, page: 1, limit, totalPages: 1 } };
+            }
+        }
+
+        function createImageCard(image) {
+            return `
+                <div class="image-card">
+                    <img src="/api/image/${image._id}" alt="WhatsApp Image">
+                    <div class="image-info">
+                        <p><strong>Sender:</strong> ${image.sender}</p>
+                        <p><strong>Caption:</strong> ${image.caption || 'No caption'}</p>
+                        <p class="timestamp"><strong>Date:</strong> ${new Date(image.timestamp).toLocaleString()}</p>
+                        <a href="/api/image/${image._id}" download="whatsapp-image-${image._id}.jpg" class="download-btn">Download Image</a>
+                    </div>
+                </div>
+            `;
+        }
+
+        function updatePagination(pagination) {
+            const { page, totalPages, total } = pagination;
+            const paginationElement = document.getElementById('pagination');
+            
+            paginationElement.innerHTML = `
+                <button onclick="changePage(${page - 1})" ${page === 1 ? 'disabled' : ''}>Previous</button>
+                <span class="pagination-info">Page ${page} of ${totalPages} (Total: ${total} images)</span>
+                <button onclick="changePage(${page + 1})" ${page === totalPages ? 'disabled' : ''}>Next</button>
+            `;
+        }
+
+        async function changePage(page) {
+            const imageGrid = document.getElementById('imageGrid');
+            imageGrid.innerHTML = '<div class="loading">Loading images...</div>';
+            
+            const data = await fetchImages(page);
+            const { images, pagination } = data;
+            
+            imageGrid.innerHTML = images.map(createImageCard).join('');
+            updatePagination(pagination);
+        }
+
+        // Initial load
+        changePage(1);
+    </script>
+</body>
+</html> 
