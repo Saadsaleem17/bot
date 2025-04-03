@@ -85,13 +85,8 @@ connectDB().catch(err => {
 const store = makeInMemoryStore({});
 
 async function connectToWhatsApp() {
-    // Only clear auth state on first run, not during reconnects
-    if (fs.existsSync('./auth') && !global.authCleared) {
-        console.log('First-time setup: Clearing existing auth state...');
-        fs.rmSync('./auth', { recursive: true, force: true });
-        fs.mkdirSync('./auth');
-        global.authCleared = true;
-    } else if (!fs.existsSync('./auth')) {
+    // Create auth directory if it doesn't exist
+    if (!fs.existsSync('./auth')) {
         console.log('Creating auth directory...');
         fs.mkdirSync('./auth');
     }
@@ -113,6 +108,7 @@ async function connectToWhatsApp() {
 
     store.bind(sock.ev);
 
+    // Save credentials whenever they are updated
     sock.ev.on('creds.update', saveCreds);
     
     // Keep track of reconnection attempts
@@ -150,7 +146,11 @@ async function connectToWhatsApp() {
                     process.exit(1);
                 }
             } else if (statusCode === DisconnectReason.loggedOut) {
-                console.log("Logged out from WhatsApp. Please restart the bot and scan the QR code again.");
+                // If logged out, clear the auth state and restart
+                console.log("Logged out from WhatsApp. Clearing auth state...");
+                fs.rmSync('./auth', { recursive: true, force: true });
+                fs.mkdirSync('./auth');
+                console.log("Please restart the bot and scan the QR code again.");
                 process.exit(1);
             } else {
                 // General reconnection for other errors
